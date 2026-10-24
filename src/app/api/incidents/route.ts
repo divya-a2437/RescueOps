@@ -4,6 +4,9 @@ import { randomUUID } from "node:crypto";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { incidentSchema } from "@/lib/incident-schema";
 
+const INCIDENT_FIELDS =
+  "id, incident_code, title, description, location, category, severity, status, occurred_at, created_at, organization_id";
+
 export async function GET() {
   try {
     const supabase = await createSupabaseServerClient();
@@ -20,13 +23,41 @@ export async function GET() {
       );
     }
 
-    const { data, error } = await supabase
+    // Resolve the workspaces this user belongs to.
+    const { data: memberships, error: membershipError } = await supabase
+      .from("organization_memberships")
+      .select("organization_id")
+      .eq("user_id", user.id);
+
+    if (membershipError) {
+      console.error("Workspace membership retrieval failed:", membershipError);
+
+      return NextResponse.json(
+        { error: "Unable to load workspace memberships." },
+        { status: 500 }
+      );
+    }
+
+    const organizationIds = [
+      ...new Set((memberships ?? []).map((membership) => membership.organization_id)),
+    ];
+
+    let incidentsQuery = supabase
       .from("incidents")
-      .select(
-        "id, incident_code, title, description, location, category, severity, status, occurred_at, created_at"
-      )
+      .select(INCIDENT_FIELDS)
       .order("created_at", { ascending: false })
       .limit(100);
+
+    // Show the user's own incidents and incidents belonging to their workspaces.
+    if (organizationIds.length > 0) {
+      incidentsQuery = incidentsQuery.or(
+        `created_by.eq.${user.id},organization_id.in.(${organizationIds.join(",")})`
+      );
+    } else {
+      incidentsQuery = incidentsQuery.eq("created_by", user.id);
+    }
+
+    const { data, error } = await incidentsQuery;
 
     if (error) {
       console.error("Incident retrieval failed:", error);
@@ -92,6 +123,26 @@ export async function POST(request: Request) {
 
     const input = parsed.data;
 
+    // Use a workspace the signed-in user actually belongs to.
+    // The current dashboard does not send a selected workspace ID,
+    // so use the user's earliest workspace membership as the default.
+    const { data: membership, error: membershipError } = await supabase
+      .from("organization_memberships")
+      .select("organization_id")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (membershipError) {
+      console.error("Workspace membership lookup failed:", membershipError);
+
+      return NextResponse.json(
+        { error: "Unable to determine your workspace." },
+        { status: 500 }
+      );
+    }
+
     const { data: incident, error } = await supabase
       .from("incidents")
       .insert({
@@ -103,10 +154,9 @@ export async function POST(request: Request) {
         severity: input.severity,
         occurred_at: input.occurred_at,
         created_by: user.id,
+        organization_id: membership?.organization_id ?? null,
       })
-      .select(
-        "id, incident_code, title, description, location, category, severity, status, occurred_at, created_at"
-      )
+      .select(INCIDENT_FIELDS)
       .single();
 
     if (error) {

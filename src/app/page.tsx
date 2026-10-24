@@ -2,13 +2,12 @@
 "use client";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import IncidentEvidence from "@/components/incident-evidence";
+import WorkspaceManager from "@/components/workspace-manager";
 import { useRouter } from "next/navigation";
 import {
   Activity,
   AlertCircle,
-  ArrowDownRight,
   ArrowRight,
-  ArrowUpRight,
   Bell,
   Check,
   ChevronDown,
@@ -16,7 +15,6 @@ import {
   ChevronRight,
   Clock3,
   Command,
-  Download,
   FileSearch,
   Filter,
   Leaf,
@@ -29,7 +27,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   TrendingUp,
-  Upload,
+  UsersRound,
   X,
   LoaderCircle,
 } from "lucide-react";
@@ -63,6 +61,7 @@ const navigation = [
   { label: "Incidents", icon: FileSearch },
   { label: "Evidence", icon: ShieldCheck },
   { label: "Interventions", icon: TrendingUp },
+  { label: "Team & workspace", icon: UsersRound },
 ];
 
 const categoryLabels: Record<IncidentCategory, string> = {
@@ -121,7 +120,6 @@ export default function DashboardPage() {
   const router = useRouter();
 
   const [incidents, setIncidents] = useState<Incident[]>([]);
-  const [isLoadingIncidents, setIsLoadingIncidents] = useState(true);
   const [incidentsLoading, setIncidentsLoading] = useState(true);
   const [incidentsError, setIncidentsError] = useState("");
   const [creatingIncident, setCreatingIncident] = useState(false);
@@ -529,6 +527,10 @@ const [currentDate, setCurrentDate] = useState("");
           </header>
 
           <div className="mx-auto max-w-[1600px] px-4 py-7 sm:px-7 sm:py-9 lg:px-10">
+            {activeNav === "Team & workspace" ? (
+              <WorkspaceManager />
+            ) : (
+              <>
             {signOutError && (
               <div
                 role="alert"
@@ -951,8 +953,10 @@ const [currentDate, setCurrentDate] = useState("");
 
             <footer className="mt-8 flex flex-col gap-2 border-t border-[#e5e9e1] pt-5 text-[10px] text-[#98a093] sm:flex-row sm:items-center sm:justify-between">
               <p>RescueOps · Food rescue operations intelligence</p>
-              <p>Prototype workspace </p>
+              <p>Prototype workspace</p>
             </footer>
+              </>
+            )}
           </div>
         </section>
       </div>
