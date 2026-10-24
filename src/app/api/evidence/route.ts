@@ -3,29 +3,17 @@ import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { cloudinary } from "@/lib/cloudinary";
 
-
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
-const ALLOWED_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-];
+const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
 const FILE_SIGNATURES: Record<string, number[][]> = {
   "image/jpeg": [[0xff, 0xd8, 0xff]],
-  "image/png": [
-    [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
-  ],
-  "image/webp": [
-    [0x52, 0x49, 0x46, 0x46],
-  ],
+  "image/png": [[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],
+  "image/webp": [[0x52, 0x49, 0x46, 0x46]],
 };
 
-function hasValidSignature(
-  buffer: Buffer,
-  contentType: string
-): boolean {
+function hasValidSignature(buffer: Buffer, contentType: string): boolean {
   const signatures = FILE_SIGNATURES[contentType];
 
   if (!signatures) return false;
@@ -59,6 +47,16 @@ async function getAuthenticatedUser() {
   return { supabase, user };
 }
 
+function getPreviewUrl(publicId: string) {
+  return cloudinary.url(publicId, {
+    secure: true,
+    transformation: [
+      { width: 640, height: 480, crop: "limit" },
+      { quality: "auto", fetch_format: "auto" },
+    ],
+  });
+}
+
 export async function GET(request: Request) {
   try {
     const { supabase, user } = await getAuthenticatedUser();
@@ -80,12 +78,10 @@ export async function GET(request: Request) {
       );
     }
 
-    // RLS ensures that only evidence belonging to incidents
-    // accessible to this user can be returned.
     const { data, error } = await supabase
       .from("evidence_assets")
       .select(
-        "id, incident_id, secure_url, resource_type, description, created_at"
+        "id, incident_id, cloudinary_public_id, secure_url, resource_type, description, quality_score, created_at"
       )
       .eq("incident_id", incidentId)
       .order("created_at", { ascending: false });
@@ -99,7 +95,12 @@ export async function GET(request: Request) {
       );
     }
 
-    return NextResponse.json({ evidence: data ?? [] });
+    const evidence = (data ?? []).map((item) => ({
+      ...item,
+      preview_url: getPreviewUrl(item.cloudinary_public_id),
+    }));
+
+    return NextResponse.json({ evidence });
   } catch (error) {
     console.error("Evidence GET failed:", error);
 
@@ -124,15 +125,11 @@ export async function POST(request: Request) {
     }
 
     const formData = await request.formData();
-
     const incidentId = formData.get("incidentId");
     const file = formData.get("file");
     const descriptionValue = formData.get("description");
 
-    if (
-      typeof incidentId !== "string" ||
-      !incidentId.trim()
-    ) {
+    if (typeof incidentId !== "string" || !incidentId.trim()) {
       return NextResponse.json(
         { error: "A valid incidentId is required." },
         { status: 400 }
@@ -165,7 +162,7 @@ export async function POST(request: Request) {
         ? descriptionValue.trim().slice(0, 500)
         : "";
 
-    // Confirm the incident belongs to the signed-in user.
+    // Verify that the signed-in user can access this incident.
     const { data: incident, error: incidentError } = await supabase
       .from("incidents")
       .select("id")
@@ -188,8 +185,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    const buffer = Buffer.from(await file.arrayBuffer());
 
     if (!hasValidSignature(buffer, file.type)) {
       return NextResponse.json(
@@ -202,12 +198,14 @@ export async function POST(request: Request) {
       public_id: string;
       secure_url: string;
       resource_type: string;
+      quality_score: number | null;
     }>((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
           folder: `rescueops/${user.id}/${incidentId}`,
           resource_type: "image",
           allowed_formats: ["jpg", "jpeg", "png", "webp"],
+          quality_analysis: true,
         },
         (error, result) => {
           if (error || !result) {
@@ -215,10 +213,20 @@ export async function POST(request: Request) {
             return;
           }
 
+          // Cloudinary's quality-analysis response can contain
+          // multiple measurements. Store its focus score when present.
+          const analysis = result.quality_analysis as
+            | { focus?: number }
+            | undefined;
+
           resolve({
             public_id: result.public_id,
             secure_url: result.secure_url,
             resource_type: result.resource_type,
+            quality_score:
+              typeof analysis?.focus === "number"
+                ? analysis.focus
+                : null,
           });
         }
       );
@@ -236,16 +244,16 @@ export async function POST(request: Request) {
         secure_url: uploadResult.secure_url,
         resource_type: uploadResult.resource_type,
         description: description || null,
+        quality_score: uploadResult.quality_score,
       })
       .select(
-        "id, incident_id, secure_url, resource_type, description, created_at"
+        "id, incident_id, cloudinary_public_id, secure_url, resource_type, description, quality_score, created_at"
       )
       .single();
 
     if (insertError) {
       console.error("Evidence database insert failed:", insertError);
 
-      // Avoid leaving an orphaned Cloudinary asset if the DB insert fails.
       try {
         await cloudinary.uploader.destroy(uploadResult.public_id, {
           resource_type: "image",
@@ -262,7 +270,17 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({ evidence }, { status: 201 });
+    uploadedPublicId = null;
+
+    return NextResponse.json(
+      {
+        evidence: {
+          ...evidence,
+          preview_url: getPreviewUrl(uploadResult.public_id),
+        },
+      },
+      { status: 201 }
+    );
   } catch (error) {
     console.error("Evidence POST failed:", error);
 
