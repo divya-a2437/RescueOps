@@ -1,28 +1,75 @@
-
 "use client";
 
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import { Leaf, LoaderCircle } from "lucide-react";
 
+type AuthMode = "signin" | "signup";
+
 export default function LoginPage() {
   const router = useRouter();
+
+  const [mode, setMode] = useState<AuthMode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [isSuccess, setIsSuccess] = useState(false);
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  function switchMode(nextMode: AuthMode) {
+    setMode(nextMode);
+    setMessage("");
+    setIsSuccess(false);
+    setConfirmPassword("");
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setMessage("");
+    setIsSuccess(false);
 
     try {
       const supabase = createSupabaseBrowserClient();
 
+      if (mode === "signup") {
+        if (password !== confirmPassword) {
+          setMessage("Your passwords do not match.");
+          return;
+        }
+
+        if (password.length < 8) {
+          setMessage("Your password must be at least 8 characters long.");
+          return;
+        }
+
+        const { data, error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+        });
+
+        if (error) {
+          setMessage(error.message);
+          return;
+        }
+
+        if (data.session) {
+          router.replace("/");
+          router.refresh();
+          return;
+        }
+
+        setIsSuccess(true);
+        setMessage(
+          "Account created! Check your email for a confirmation link if email verification is enabled. You can sign in once your account is confirmed."
+        );
+        return;
+      }
+
       const { error } = await supabase.auth.signInWithPassword({
-        email,
+        email: email.trim(),
         password,
       });
 
@@ -34,7 +81,11 @@ export default function LoginPage() {
       router.replace("/");
       router.refresh();
     } catch {
-      setMessage("Unable to sign in. Check your configuration and try again.");
+      setMessage(
+        mode === "signup"
+          ? "Unable to create your account. Check your configuration and try again."
+          : "Unable to sign in. Check your configuration and try again."
+      );
     } finally {
       setLoading(false);
     }
@@ -50,11 +101,15 @@ export default function LoginPage() {
         <p className="mt-7 text-xs font-semibold uppercase tracking-[0.18em] text-[#66806a]">
           RescueOps workspace
         </p>
+
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">
-          Welcome back.
+          {mode === "signin" ? "Welcome back." : "Create your account."}
         </h1>
+
         <p className="mt-2 text-sm leading-6 text-[#778077]">
-          Sign in to investigate incidents and manage evidence-backed actions.
+          {mode === "signin"
+            ? "Sign in to investigate incidents and manage evidence-backed actions."
+            : "Join RescueOps to track incidents and manage evidence-backed actions."}
         </p>
 
         <form onSubmit={handleSubmit} className="mt-8 space-y-5">
@@ -69,29 +124,68 @@ export default function LoginPage() {
               required
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              className="w-full rounded-xl border border-[#dfe5dc] px-4 py-3 text-sm outline-none focus:border-[#618568]"
+              className="w-full rounded-xl border border-[#dfe5dc] px-4 py-3 text-sm outline-none transition focus:border-[#618568] focus:ring-2 focus:ring-[#618568]/10"
               placeholder="you@example.com"
             />
           </div>
 
           <div>
-            <label htmlFor="password" className="mb-2 block text-sm font-medium">
+            <label
+              htmlFor="password"
+              className="mb-2 block text-sm font-medium"
+            >
               Password
             </label>
             <input
               id="password"
               type="password"
-              autoComplete="current-password"
+              autoComplete={
+                mode === "signin" ? "current-password" : "new-password"
+              }
               required
+              minLength={mode === "signup" ? 8 : undefined}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              className="w-full rounded-xl border border-[#dfe5dc] px-4 py-3 text-sm outline-none focus:border-[#618568]"
-              placeholder="Your password"
+              className="w-full rounded-xl border border-[#dfe5dc] px-4 py-3 text-sm outline-none transition focus:border-[#618568] focus:ring-2 focus:ring-[#618568]/10"
+              placeholder={
+                mode === "signin"
+                  ? "Your password"
+                  : "At least 8 characters"
+              }
             />
           </div>
 
+          {mode === "signup" && (
+            <div>
+              <label
+                htmlFor="confirmPassword"
+                className="mb-2 block text-sm font-medium"
+              >
+                Confirm password
+              </label>
+              <input
+                id="confirmPassword"
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={8}
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                className="w-full rounded-xl border border-[#dfe5dc] px-4 py-3 text-sm outline-none transition focus:border-[#618568] focus:ring-2 focus:ring-[#618568]/10"
+                placeholder="Enter your password again"
+              />
+            </div>
+          )}
+
           {message && (
-            <p role="alert" className="rounded-xl bg-[#fbefed] p-3 text-sm text-[#a44736]">
+            <p
+              role={isSuccess ? "status" : "alert"}
+              className={`rounded-xl p-3 text-sm leading-5 ${
+                isSuccess
+                  ? "bg-[#edf5ec] text-[#315f39]"
+                  : "bg-[#fbefed] text-[#a44736]"
+              }`}
+            >
               {message}
             </p>
           )}
@@ -99,15 +193,40 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#1c4930] py-3.5 text-sm font-semibold text-white transition hover:bg-[#143a25] disabled:opacity-60"
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#1c4930] py-3.5 text-sm font-semibold text-white transition hover:bg-[#143a25] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading && <LoaderCircle size={17} className="animate-spin" />}
-            {loading ? "Signing in..." : "Sign in"}
+            {loading
+              ? mode === "signin"
+                ? "Signing in..."
+                : "Creating account..."
+              : mode === "signin"
+                ? "Sign in"
+                : "Create account"}
           </button>
         </form>
 
+        <div className="mt-6 text-center">
+          <p className="text-sm text-[#778077]">
+            {mode === "signin"
+              ? "New to RescueOps?"
+              : "Already have an account?"}{" "}
+            <button
+              type="button"
+              onClick={() =>
+                switchMode(mode === "signin" ? "signup" : "signin")
+              }
+              disabled={loading}
+              className="font-semibold text-[#1c4930] underline-offset-4 transition hover:underline disabled:opacity-60"
+            >
+              {mode === "signin" ? "Create an account" : "Sign in"}
+            </button>
+          </p>
+        </div>
+
         <p className="mt-6 text-center text-xs leading-5 text-[#8a9388]">
-          Demo workspace authentication · Accounts are managed through Supabase.
+          Secure workspace authentication · Accounts are managed through
+          Supabase.
         </p>
       </div>
     </main>
