@@ -587,10 +587,6 @@ const [currentDate, setCurrentDate] = useState("");
                 <span className="text-[#c0c7bd]">/</span>
                 <span>Operational snapshot</span>
               </div>
-              <div className="flex items-center gap-2 rounded-lg border border-[#e3e8e0] bg-white px-3 py-2 text-[10px] text-[#788376]">
-                <ShieldCheck size={13} className="text-[#547b50]" />
-                Demo data
-              </div>
             </div>
 
             <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
