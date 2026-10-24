@@ -837,7 +837,7 @@ const [currentDate, setCurrentDate] = useState("");
                       </p>
                     </div>
                     <span className="rounded-md border border-[#e6eae2] px-2 py-1 text-[9px] font-medium text-[#7d8979]">
-                      Demo
+                      Your Data
                     </span>
                   </div>
 
@@ -873,8 +873,7 @@ const [currentDate, setCurrentDate] = useState("");
                   </div>
 
                   <p className="mt-5 border-t border-[#edf0ea] pt-4 text-[10px] leading-5 text-[#9aa294]">
-                    These counts describe the displayed demo records, not
-                    verified operational trends.
+                    These counts describe the displayed records, given by the user.
                   </p>
                 </section>
 
@@ -952,7 +951,7 @@ const [currentDate, setCurrentDate] = useState("");
 
             <footer className="mt-8 flex flex-col gap-2 border-t border-[#e5e9e1] pt-5 text-[10px] text-[#98a093] sm:flex-row sm:items-center sm:justify-between">
               <p>RescueOps · Food rescue operations intelligence</p>
-              <p>Prototype workspace · Demo records are illustrative</p>
+              <p>Prototype workspace </p>
             </footer>
           </div>
         </section>
