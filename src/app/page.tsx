@@ -1,6 +1,7 @@
 
 "use client";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import IncidentEvidence from "@/components/incident-evidence";
 import { useRouter } from "next/navigation";
 import {
   Activity,
@@ -55,68 +56,7 @@ type Incident = {
   occurred_at: string;
 };
 
-const initialIncidents: Incident[] = [
-  {
-    id: "demo-024",
-    incident_code: "INC-024",
-    title: "Pickup missed after confirmation",
-    description:
-      "A scheduled collection was marked confirmed but no pickup was recorded.",
-    location: "Sector 18 Community Kitchen",
-    category: "missed_pickup",
-    severity: "high",
-    status: "investigating",
-    occurred_at: "2026-10-24T08:42:00+05:30",
-  },
-  {
-    id: "demo-023",
-    incident_code: "INC-023",
-    title: "Collection arrived outside time window",
-    description:
-      "The collection vehicle arrived after the agreed collection window.",
-    location: "Green Park Distribution Hub",
-    category: "late_collection",
-    severity: "medium",
-    status: "under_review",
-    occurred_at: "2026-10-23T16:15:00+05:30",
-  },
-  {
-    id: "demo-022",
-    incident_code: "INC-022",
-    title: "Surplus quantity differed from report",
-    description:
-      "Reported surplus quantity did not match the quantity received.",
-    location: "Community Centre, Block B",
-    category: "quantity_mismatch",
-    severity: "low",
-    status: "resolved",
-    occurred_at: "2026-10-23T11:20:00+05:30",
-  },
-  {
-    id: "demo-021",
-    incident_code: "INC-021",
-    title: "Food quality check requires review",
-    description:
-      "The receiving team requested an additional quality verification.",
-    location: "Eastside Collection Point",
-    category: "quality_concern",
-    severity: "high",
-    status: "investigating",
-    occurred_at: "2026-10-22T14:05:00+05:30",
-  },
-  {
-    id: "demo-020",
-    incident_code: "INC-020",
-    title: "Collection record needs verification",
-    description:
-      "A delivery record is missing supporting confirmation evidence.",
-    location: "Sector 62 Partner Kitchen",
-    category: "other",
-    severity: "medium",
-    status: "under_review",
-    occurred_at: "2026-10-21T09:30:00+05:30",
-  },
-];
+
 
 const navigation = [
   { label: "Overview", icon: Activity },
@@ -180,7 +120,11 @@ function getStatusClasses(status: IncidentStatus) {
 export default function DashboardPage() {
   const router = useRouter();
 
-  const [incidents, setIncidents] = useState<Incident[]>(initialIncidents);
+  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [isLoadingIncidents, setIsLoadingIncidents] = useState(true);
+  const [incidentsLoading, setIncidentsLoading] = useState(true);
+  const [incidentsError, setIncidentsError] = useState("");
+  const [creatingIncident, setCreatingIncident] = useState(false);
   const [activeNav, setActiveNav] = useState("Overview");
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -200,6 +144,57 @@ export default function DashboardPage() {
     category: "missed_pickup" as IncidentCategory,
     severity: "medium" as Severity,
   });
+  
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadIncidents() {
+      setIncidentsLoading(true);
+      setIncidentsError("");
+
+      try {
+        const response = await fetch("/api/incidents", {
+          method: "GET",
+          cache: "no-store",
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(result.error || "Unable to load incidents.");
+        }
+
+        if (!cancelled) {
+          setIncidents(
+            result.incidents.map((item: Incident) => ({
+              ...item,
+              description: item.description ?? "",
+              location: item.location ?? "",
+            }))
+          );
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setIncidentsError(
+            error instanceof Error
+              ? error.message
+              : "Unable to load incidents."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIncidentsLoading(false);
+        }
+      }
+    }
+
+    loadIncidents();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
 
   const filteredIncidents = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
@@ -272,46 +267,60 @@ const [currentDate, setCurrentDate] = useState("");
     }
   }
 
-  function handleCreateIncident(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setFormError("");
+  
+  async function handleCreateIncident(event: FormEvent<HTMLFormElement>) {
+  event.preventDefault();
+  setFormError("");
 
-    const title = newIncident.title.trim();
-    const location = newIncident.location.trim();
-    const description = newIncident.description.trim();
+  const title = newIncident.title.trim();
+  const location = newIncident.location.trim();
+  const description = newIncident.description.trim();
 
-    if (title.length < 3) {
-      setFormError("Enter an incident title with at least 3 characters.");
-      return;
+  if (title.length < 3) {
+    setFormError("Enter an incident title with at least 3 characters.");
+    return;
+  }
+
+  if (!location) {
+    setFormError("Enter the incident location.");
+    return;
+  }
+
+  setCreatingIncident(true);
+
+  try {
+    const response = await fetch("/api/incidents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title,
+        location,
+        description,
+        category: newIncident.category,
+        severity: newIncident.severity,
+        occurred_at: new Date().toISOString(),
+      }),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        result.error || "Unable to save the incident."
+      );
     }
 
-    if (!location) {
-      setFormError("Enter the incident location.");
-      return;
-    }
-
-    const createdAt = new Date().toISOString();
-    const incident: Incident = {
-      id: `local-${Date.now()}`,
-      incident_code: `INC-${String(
-        Math.max(
-          0,
-          ...incidents.map((item) => {
-            const match = item.incident_code.match(/INC-(\d+)/);
-            return match ? Number(match[1]) : 0;
-          })
-        ) + 1
-      ).padStart(3, "0")}`,
-      title,
-      description,
-      location,
-      category: newIncident.category,
-      severity: newIncident.severity,
-      status: "investigating",
-      occurred_at: createdAt,
+    const savedIncident: Incident = {
+      ...result.incident,
+      description: result.incident.description ?? "",
+      location: result.incident.location ?? "",
     };
 
-    setIncidents((current) => [incident, ...current]);
+    setIncidents((current) => [
+      savedIncident,
+      ...current.filter((item) => item.id !== savedIncident.id),
+    ]);
+
     setFilter("all");
     setSearch("");
     setNewIncident({
@@ -322,7 +331,17 @@ const [currentDate, setCurrentDate] = useState("");
       severity: "medium",
     });
     setShowNewIncident(false);
+  } catch (error) {
+    setFormError(
+      error instanceof Error
+        ? error.message
+        : "Unable to save the incident."
+    );
+  } finally {
+    setCreatingIncident(false);
   }
+  }
+
 
   function handleNavigation(label: string) {
     setActiveNav(label);
@@ -1111,10 +1130,9 @@ const [currentDate, setCurrentDate] = useState("");
               </div>
 
               <div className="flex items-start gap-2 rounded-xl border border-[#e5e9e1] bg-[#f8faf6] p-3">
-                <AlertCircle size={15} className="mt-0.5 shrink-0 text-[#7b8b73]" />
+                <ShieldCheck size={15} className="mt-0.5 shrink-0 text-[#557650]" />
                 <p className="text-[10px] leading-5 text-[#778274]">
-                  This prototype adds the incident to the current page only.
-                  It is not saved to Supabase yet.
+                  This incident will be saved to your authenticated RescueOps workspace.
                 </p>
               </div>
 
@@ -1138,13 +1156,25 @@ const [currentDate, setCurrentDate] = useState("");
                 >
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#214b31] px-5 py-3 text-xs font-semibold text-white transition hover:bg-[#173b25]"
-                >
-                  <Plus size={15} />
-                  Create incident
-                </button>
+                
+    <button
+      type="submit"
+      disabled={creatingIncident}
+      className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#214b31] px-5 py-3 text-xs font-semibold text-white transition hover:bg-[#173b25] disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      {creatingIncident ? (
+        <>
+          <LoaderCircle size={15} className="animate-spin" />
+          Saving incident...
+        </>
+      ) : (
+        <>
+          <Plus size={15} />
+          Create incident
+        </>
+      )}
+    </button>
+
               </div>
             </form>
           </section>
@@ -1236,14 +1266,8 @@ const [currentDate, setCurrentDate] = useState("");
                     size={16}
                     className="mt-0.5 shrink-0 text-[#557650]"
                   />
-                  <div>
-                    <p className="text-xs font-semibold text-[#40513f]">
-                      Evidence status
-                    </p>
-                    <p className="mt-1 text-[10px] leading-5 text-[#818b7d]">
-                      Evidence attachment and intervention tracking are not
-                      connected in this dashboard preview.
-                    </p>
+                  <div className="mt-5">
+                    <IncidentEvidence incidentId={selectedIncident.id} />
                   </div>
                 </div>
               </div>
