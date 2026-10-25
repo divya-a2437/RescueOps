@@ -13,6 +13,11 @@ const FILE_SIGNATURES: Record<string, number[][]> = {
   "image/webp": [[0x52, 0x49, 0x46, 0x46]],
 };
 
+type CloudinaryAITag = {
+  name?: unknown;
+  tag?: unknown;
+};
+
 function hasValidSignature(buffer: Buffer, contentType: string): boolean {
   const signatures = FILE_SIGNATURES[contentType];
 
@@ -57,6 +62,164 @@ function getPreviewUrl(publicId: string) {
   });
 }
 
+/**
+ * Requests Cloudinary AI Vision custom tagging.
+ * Tagging is best-effort: an AI failure must not prevent evidence uploads.
+ */
+async function analyzeEvidenceTags(imageUrl: string): Promise<string[]> {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  const apiKey = process.env.CLOUDINARY_API_KEY;
+  const apiSecret = process.env.CLOUDINARY_API_SECRET;
+
+  if (!cloudName || !apiKey || !apiSecret) {
+    console.warn(
+      "Cloudinary AI tagging skipped: Cloudinary credentials are missing."
+    );
+    return [];
+  }
+
+  try {
+    const credentials = Buffer.from(`${apiKey}:${apiSecret}`).toString(
+      "base64"
+    );
+
+    const response = await fetch(
+      `https://api.cloudinary.com/v2/analysis/${encodeURIComponent(
+        cloudName
+      )}/analyze/ai_vision_tagging`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${credentials}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          source: {
+            uri: imageUrl,
+          },
+          tag_definitions: [
+            {
+              name: "visible-damage",
+              description:
+                "The image visibly shows physical damage, breakage, tearing, or deformation.",
+            },
+            {
+              name: "packaging-issue",
+              description:
+                "The image shows damaged, defective, opened, or improperly sealed packaging.",
+            },
+            {
+              name: "spillage-or-leak",
+              description:
+                "The image shows spilled material, leakage, liquid escaping, or a visible spill.",
+            },
+            {
+              name: "food-or-perishable-item",
+              description:
+                "The image contains food, groceries, or other perishable items.",
+            },
+            {
+              name: "label-or-document",
+              description:
+                "The image prominently shows a label, printed document, receipt, product marking, or written record.",
+            },
+            {
+              name: "unsafe-environment",
+              description:
+                "The image visibly shows a potentially unsafe environment, obstruction, or physical hazard.",
+            },
+            {
+              name: "missing-or-displaced_item",
+              description:
+                "The image shows a displaced object or a visible indication that an item is absent from its expected place.",
+            },
+            {
+              name: "delivery-or-collection_evidence",
+              description:
+                "The image shows a delivery, parcel handover, collection activity, or goods awaiting collection.",
+            },
+          ],
+        }),
+        cache: "no-store",
+      }
+    );
+
+    const responseText = await response.text();
+
+    console.log("[AI TAGGING] HTTP status:", response.status);
+    console.log("[AI TAGGING] Response:", responseText);
+
+    if (!response.ok) {
+      console.error(
+        "Cloudinary AI tagging failed:",
+        response.status,
+        responseText
+      );
+      return [];
+    }
+
+    let result: unknown;
+
+    try {
+      result = responseText ? JSON.parse(responseText) : {};
+    } catch {
+      console.error("Cloudinary AI tagging returned invalid JSON.");
+      return [];
+    }
+
+    // The API may accept an analysis request before its result is ready.
+    if (response.status === 202) {
+      console.warn(
+        "Cloudinary AI tagging was accepted but is not complete yet."
+      );
+      return [];
+    }
+
+    const root = result as {
+      data?: {
+        analysis?: { tags?: unknown };
+        tags?: unknown;
+      };
+      analysis?: { tags?: unknown };
+      tags?: unknown;
+    };
+
+    const possibleTags =
+      root?.data?.analysis?.tags ??
+      root?.data?.tags ??
+      root?.analysis?.tags ??
+      root?.tags;
+
+    if (!Array.isArray(possibleTags)) {
+      console.warn(
+        "Cloudinary AI tagging response did not contain a tags array."
+      );
+      return [];
+    }
+
+    const tags = (possibleTags as (CloudinaryAITag | string)[])
+      .map((item) => {
+        if (typeof item === "string") return item;
+
+        if (item && typeof item === "object") {
+          if (typeof item.name === "string") return item.name;
+          if (typeof item.tag === "string") return item.tag;
+        }
+
+        return null;
+      })
+      .filter(
+        (tag): tag is string =>
+          typeof tag === "string" && tag.length > 0
+      );
+
+    return [...new Set(tags)];
+  } catch (error) {
+    console.error("Cloudinary AI tagging error:", error);
+    return [];
+  }
+}
+
 export async function GET(request: Request) {
   try {
     const { supabase, user } = await getAuthenticatedUser();
@@ -81,7 +244,7 @@ export async function GET(request: Request) {
     const { data, error } = await supabase
       .from("evidence_assets")
       .select(
-        "id, incident_id, cloudinary_public_id, secure_url, resource_type, description, quality_score, created_at"
+        "id, incident_id, cloudinary_public_id, secure_url, resource_type, description, quality_score, ai_tags, created_at"
       )
       .eq("incident_id", incidentId)
       .order("created_at", { ascending: false });
@@ -97,6 +260,7 @@ export async function GET(request: Request) {
 
     const evidence = (data ?? []).map((item) => ({
       ...item,
+      ai_tags: Array.isArray(item.ai_tags) ? item.ai_tags : [],
       preview_url: getPreviewUrl(item.cloudinary_public_id),
     }));
 
@@ -213,8 +377,7 @@ export async function POST(request: Request) {
             return;
           }
 
-          // Cloudinary's quality-analysis response can contain
-          // multiple measurements. Store its focus score when present.
+          // Store Cloudinary's focus score when available.
           const analysis = result.quality_analysis as
             | { focus?: number }
             | undefined;
@@ -236,6 +399,9 @@ export async function POST(request: Request) {
 
     uploadedPublicId = uploadResult.public_id;
 
+    // AI tagging is best-effort; uploads continue if tagging fails.
+    const aiTags = await analyzeEvidenceTags(uploadResult.secure_url);
+
     const { data: evidence, error: insertError } = await supabase
       .from("evidence_assets")
       .insert({
@@ -245,9 +411,10 @@ export async function POST(request: Request) {
         resource_type: uploadResult.resource_type,
         description: description || null,
         quality_score: uploadResult.quality_score,
+        ai_tags: aiTags,
       })
       .select(
-        "id, incident_id, cloudinary_public_id, secure_url, resource_type, description, quality_score, created_at"
+        "id, incident_id, cloudinary_public_id, secure_url, resource_type, description, quality_score, ai_tags, created_at"
       )
       .single();
 
@@ -276,6 +443,7 @@ export async function POST(request: Request) {
       {
         evidence: {
           ...evidence,
+          ai_tags: Array.isArray(evidence.ai_tags) ? evidence.ai_tags : [],
           preview_url: getPreviewUrl(uploadResult.public_id),
         },
       },
