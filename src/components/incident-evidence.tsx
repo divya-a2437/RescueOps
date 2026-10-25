@@ -8,6 +8,9 @@ import {
   FileImage,
   LoaderCircle,
   RefreshCw,
+  ScanSearch,
+  ShieldCheck,
+  CircleAlert,
 } from "lucide-react";
 import EvidenceUpload from "@/components/evidence-upload";
 
@@ -15,14 +18,105 @@ type Evidence = {
   id: string;
   incident_id: string;
   secure_url: string;
+  preview_url?: string;
   resource_type?: string;
   description: string | null;
+  quality_score?: number | null;
   created_at: string;
 };
 
 type IncidentEvidenceProps = {
   incidentId: string;
 };
+
+function QualityIndicator({
+  score,
+}: {
+  score?: number | null;
+}) {
+  if (typeof score !== "number" || !Number.isFinite(score)) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f3f5f1] px-2.5 py-1 text-xs text-[#727c70]">
+        <ScanSearch size={13} />
+        Quality score unavailable
+      </span>
+    );
+  }
+
+  const percentage = Math.round(score * 100);
+  const isLow = score < 0.5;
+  const isGood = score >= 0.75;
+
+  const styles = isLow
+    ? "border-[#f0d6d1] bg-[#fbefed] text-[#a44736]"
+    : isGood
+      ? "border-[#d7e6d3] bg-[#edf5e9] text-[#426b45]"
+      : "border-[#eadfbd] bg-[#faf5e7] text-[#8b6b27]";
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[#586657]">
+          <ScanSearch size={14} />
+          Image focus score
+        </span>
+
+        <span
+          className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${styles}`}
+        >
+          {percentage}%
+        </span>
+      </div>
+
+      <div
+        className="h-1.5 overflow-hidden rounded-full bg-[#edf0ea]"
+        role="progressbar"
+        aria-label="Image focus score"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.max(0, Math.min(100, percentage))}
+      >
+        <div
+          className={`h-full rounded-full transition-all ${
+            isLow
+              ? "bg-[#c76b5c]"
+              : isGood
+                ? "bg-[#6e9870]"
+                : "bg-[#c4a354]"
+          }`}
+          style={{
+            width: `${Math.max(0, Math.min(100, percentage))}%`,
+          }}
+        />
+      </div>
+
+      <p className="flex items-start gap-1.5 text-xs leading-5 text-[#7a857a]">
+        {isLow ? (
+          <>
+            <CircleAlert
+              size={14}
+              className="mt-0.5 shrink-0 text-[#a44736]"
+            />
+            Low focus score. Check the image details and consider retaking it.
+          </>
+        ) : isGood ? (
+          <>
+            <ShieldCheck
+              size={14}
+              className="mt-0.5 shrink-0 text-[#648268]"
+            />
+            Strong focus score. Verify that the evidence details are readable.
+          </>
+        ) : (
+          <>
+            <ScanSearch size={14} className="mt-0.5 shrink-0" />
+            Moderate focus score. Check important details for clarity.
+          </>
+        )}
+      </p>
+    </div>
+  );
+}
 
 export default function IncidentEvidence({
   incidentId,
@@ -89,7 +183,7 @@ export default function IncidentEvidence({
             Incident evidence
           </h3>
           <p className="mt-1 text-xs text-[#7a857a]">
-            Supporting records linked to this incident.
+            Supporting records with optimised previews and image focus analysis.
           </p>
         </div>
 
@@ -160,11 +254,11 @@ export default function IncidentEvidence({
                 href={item.secure_url}
                 target="_blank"
                 rel="noreferrer"
-                aria-label="Open evidence image in a new tab"
+                aria-label="Open original evidence image in a new tab"
                 className="group relative block aspect-[4/3] overflow-hidden bg-[#f4f7f2]"
               >
                 <img
-                  src={item.secure_url}
+                  src={item.preview_url || item.secure_url}
                   alt={item.description || "Incident evidence"}
                   loading="lazy"
                   className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]"
@@ -172,19 +266,28 @@ export default function IncidentEvidence({
                 <span className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-lg bg-white/90 text-[#344a38] shadow-sm">
                   <ExternalLink size={15} />
                 </span>
+                <span className="absolute bottom-3 left-3 rounded-md bg-[#243328]/85 px-2 py-1 text-[10px] font-medium text-white">
+                  Cloudinary optimised preview
+                </span>
               </a>
 
-              <div className="p-4">
-                <p className="text-sm font-medium text-[#344237]">
-                  {item.description || "Supporting evidence"}
-                </p>
-                <p className="mt-2 text-xs text-[#899188]">
-                  Uploaded{" "}
-                  {new Date(item.created_at).toLocaleString(undefined, {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  })}
-                </p>
+              <div className="space-y-4 p-4">
+                <div>
+                  <p className="text-sm font-medium text-[#344237]">
+                    {item.description || "Supporting evidence"}
+                  </p>
+                  <p className="mt-2 text-xs text-[#899188]">
+                    Uploaded{" "}
+                    {new Date(item.created_at).toLocaleString(undefined, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })}
+                  </p>
+                </div>
+
+                <div className="border-t border-[#edf0ea] pt-3">
+                  <QualityIndicator score={item.quality_score} />
+                </div>
               </div>
             </article>
           ))}
