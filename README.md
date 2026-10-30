@@ -266,6 +266,3 @@ RescueOps is currently in active development. The core workflow is in place for 
 
 ---
 
-## License
-
-This project is currently intended for internal or project-specific use unless otherwise stated by the repository owner.
