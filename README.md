@@ -122,7 +122,7 @@ RescueOps includes an experimental integration with Cloudinary's AI vision taggi
 | Tailwind CSS | User interface styling |
 | Supabase | Authentication, database, and access policies |
 | Cloudinary | Evidence image storage, transformations, and quality analysis |
-| OpenRouter | AI integration infrastructure, where configured |
+| Cloudinary AI Vision | AI integration infrastructure, where configured |
 | Vercel | Application deployment |
 
 ---
